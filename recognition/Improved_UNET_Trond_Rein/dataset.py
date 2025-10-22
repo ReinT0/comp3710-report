@@ -2,34 +2,62 @@
 "dataset.py" containing the data loader for loading and preprocessing your data
 """
 import numpy as np
-import torch
-import torchvision
-from torch.utils.data import Dataset, DataLoader
-import nibabel as nib
-from tqdm import tqdm
+import torch, os
+from torch.utils.data import Dataset
+import torchvision.transforms.functional as TF
+from PIL import Image
 
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f'Using device: {device}')
+from utils import TRAIN_DIR, TRAIN_SEG_DIR, TEST_DIR, TEST_SEG_DIR, VAL_DIR, VAL_SEG_DIR, NUM_CLASSES
 
 class OasisBrainDataset(Dataset):
-    def __init__(self, data_paths, labels, transform=None):
-        #self.dataset = Oasis(root='./data', split=split, target_types='segmentation', download=True)
-        #self.transform = transform
-        self.data_paths = data_paths
-        self.labels = labels
-        self.transform = transform
+    def __init__(self,
+                 img_set,
+                 size,
+                 num_classes=NUM_CLASSES):
+        
+        # Set which file to load given argument       
+        set_map = {
+            'train': (TRAIN_DIR, TRAIN_SEG_DIR),
+            'test': (TEST_DIR, TEST_SEG_DIR),
+            'validate': (VAL_DIR, VAL_SEG_DIR),
+            'val': (VAL_DIR, VAL_SEG_DIR),
+        }
+        # Throw error if given wrong arg
+        if img_set not in set_map:
+            raise ValueError(f"img_set must be one of {list(set_map.keys())}, got {img_set!r}")
+
+        self.image_dir, self.mask_dir = set_map[img_set]
+
+        self.size = (size, size)
+        self.num_classes = num_classes
+
+        self.images = sorted(os.listdir(self.image_dir))
+        self.masks = sorted(os.listdir(self.mask_dir))
+        
+        assert len(self.images) == len(self.masks), "Image/Mask count mismatch"  
+        
 
     def __len__(self):
-        return len(self.data_paths)
+        return len(self.images)
 
-    train_dataset = torchvision.ImageFolder(root=data_paths, transform=torchvision.transforms.ToTensor())
-    
-    train_loader = DataLoader(train_dataset, batch_size=64, num_workers=1, shuffle=True)
+    def __getitem__(self, idx):
+        img = Image.open(self.image_dir + "/" + self.images[idx])
+        mask = Image.open(self.mask_dir + "/" + self.masks[idx])
 
-    return img_data, label
+        img = TF.resize(img, self.size, interpolation=TF.InterpolationMode.BILINEAR)
+        mask = TF.resize(mask, self.size, interpolation=TF.InterpolationMode.NEAREST)
 
-
+        img = TF.to_tensor(img)
+        img = TF.normalize(img, mean=[0.5], std=[0.5])
+        
+        mask = np.array(mask, dtype=np.uint64)
+        
+        # This is for make sure the max value for a class i 255 and splits it right
+        mask = np.floor(mask.astype(np.float32) * self.num_classes / 256.0).astype(np.int64)
+        mask = np.clip(mask, 0, self.num_classes - 1)
+        
+        mask = torch.from_numpy(mask)
+        return img, mask
 
 
 
@@ -40,6 +68,9 @@ class OasisBrainDataset(Dataset):
 
 """
 ### This is for loading Nifti files for HipMRI images
+import nibabel as nib
+from tqdm import tqdm
+
 def to_channels (arr: np.ndarray, dtype=np.uint8) -> np.ndarray:
     channels = np.unique(arr)
     res = np.zeros(arr.shape + (len(channels),), dtype=dtype)
