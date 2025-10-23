@@ -1,8 +1,3 @@
-"""
-"modules.py" containing the source code of the components of your model. Each component must be
-implementated as a class or a function
-"""
-# Loading all the nessecary libraries //
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,12 +24,12 @@ class PreActivationBlock(nn.Module):
     def forward(self, x):
         y = self.conv1(self.act(self.norm1(x)))
         y = self.drop(y)
-        self.conv2(self.act(self.norm2(y)))
+
+        y = self.conv2(self.act(self.norm2(y)))
+
         return y + self.skip(x)
 
 
-
-# This is a simple UNet from the colab, needs update to be the Improved UNet
 class ImprovedUNet(nn.Module):
     def __init__(self, in_channels=3, num_classes=NUM_CLASSES, base=32, dropout=0.1):
         super().__init__()
@@ -50,6 +45,7 @@ class ImprovedUNet(nn.Module):
         self.encode3 = PreActivationBlock(f2, f2, dropout)
         self.down3 = nn.Conv2d(f2, f3, kernel_size=3, stride=2, padding=1)
         
+        # Bottleneck (Middle part)
         self.bottleneck = PreActivationBlock(f3, f3, dropout)
         
         # Decoder (Upsampler)
@@ -66,7 +62,6 @@ class ImprovedUNet(nn.Module):
         self.segment2 = nn.Conv2d(f1, num_classes, kernel_size=1)
         self.segment1 = nn.Conv2d(f0, num_classes, kernel_size=1)
         
-        #self.softmax = F.softmax()
 
     def forward(self, x):
         H, W = x.shape[-2:]
@@ -86,21 +81,25 @@ class ImprovedUNet(nn.Module):
         out3 = F.interpolate(self.segment3(d3), size=(H, W), mode='bilinear', align_corners=False)
         
         out = out1 + out2 + out3
-        #out = self.softmax(out)
         
         return out
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes=NUM_CLASSES, smooth=1e-6):
+    def __init__(self, num_classes=NUM_CLASSES, smooth=1e-6, ignore_bg=False):
         super().__init__()
         self.num_classes = num_classes
         self.smooth = smooth
+        self.ignore_bg = ignore_bg
 
     def forward(self, logits, targets):
         probs = F.softmax(logits, dim=1)
-        target_oh = F.one_hot(target.long(), self.num_classes)
+        target_oh = F.one_hot(targets.long(), self.num_classes)
         target_oh = target_oh.permute(0, 3, 1, 2).float()
+        
+        if self.ignore_bg:
+            probs = probs[:, 1:, ...]
+            target_oh = target_oh[:, 1:, ...]
 
         dims = (0, 2, 3)
 
@@ -109,4 +108,6 @@ class DiceLoss(nn.Module):
 
         dice_coeff = (2.0 * intersection + self.smooth) / (denom + self.smooth)
 
-        return 1 - dice_coeff.mean()
+        loss = 1 - dice_coeff.mean()
+
+        return loss
