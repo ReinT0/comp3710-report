@@ -5,69 +5,84 @@ implementated as a class or a function
 # Loading all the nessecary libraries //
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from utils import NUM_CLASSES
 
-# This is a simple UNet from the colab
-class ImprovedUNet(nn.Module):
-    def __init__(self, in_channels=3, out_channels=1, dropout_p=0.2):
+class PreActivationBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, dropout=0.1):
         super().__init__()
-        self.dropout_p = dropout_p
+
+        self.activation_layer = nn.SiLU()
+
+        # First convolution
+        self.nrom1 = nn.InstanceNorm2d(in_ch)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
+        self.norm2 = nn.InstanceNorm2d(out_ch),
+        self.conv2 = nn.Conv2d(out_ch, out_ch, kernel_size=3, padding=1)
+        self.act = self.activation_layer(negative_slope=0.2, inplace=True),
+        self.drop = nn.Dropout2d(dropout)
+        self.skip = nn.Conv2d(in_ch, out_ch, kernel_size=1) if in_ch != out_ch else nn.Identity()
+                
+    def forward(self, x):
+        y = self.conv1(self.act(self.norm1(x)))
+        y = self.drop(y)
+        self.conv2(self.act(self.norm2(y)))
+        return y + self.skip(x)
+
+
+
+# This is a simple UNet from the colab, needs update to be the Improved UNet
+class ImprovedUNet(nn.Module):
+    def __init__(self, in_channels=3, num_classes=NUM_CLASSES, base=32, dropout=0.1):
+        super().__init__()
+        f0, f1, f2, f3 = base, base*2, base*4, base*8
 
         # Encoder (Downsampler)
-        self.down_convolution_1 = DownSample(in_channels, 64)
-        self.down_convolution_2 = DownSample(64, 128)
-        self.down_convolution_3 = DownSample(128, 256)
-        self.down_convolution_4 = DownSample(256, 512)
+        self.encode1 = PreActivationBlock(in_channels, f0, dropout)
+        self.down1 = nn.Conv2d(f0, f1, kernel_size=3, stride=2, padding=1)
 
-        # Bottleneck, the middle part
-        self.bottle_neck = DoubleConv(512, 1024)
+        self.encode2 = PreActivationBlock(f1, f1, dropout)
+        self.down2 = nn.Conv2d(f1, f2, kernel_size=3, stride=2, padding=1)
+
+        self.encode3 = PreActivationBlock(f2, f2, dropout)
+        self.down3 = nn.Conv2d(f2, f3, kernel_size=3, stride=2, padding=1)
+        
+        self.bottleneck = PreActivationBlock(f3, f3, dropout)
         
         # Decoder (Upsampler)
-        self.up_convolution_1 = UpSample(1024, 512)
-        self.up_convolution_2 = UpSample(512, 256)
-        self.up_convolution_3 = UpSample(256, 128)
-        self.up_convolution_4 = UpSample(128, 64)
+        self.up3 = nn.ConvTranspose2d(f3, f2, kernel_size=2, stride=2)        
+        self.decode3 = PreActivationBlock(f2+f2, f2, dropout)
+
+        self.up2 = nn.ConvTranspose2d(f2, f1, kernel_size=2, stride=2)        
+        self.decode3 = PreActivationBlock(f1+f1, f1, dropout)
+
+        self.up1 = nn.ConvTranspose2d(f1, f0, kernel_size=2, stride=2)        
+        self.decode1 = PreActivationBlock(f0+f0, f0, dropout)
+
+        self.segment3 = nn.Conv2d(f2, num_classes, kernel_size=1)
+        self.segment2 = nn.Conv2d(f1, num_classes, kernel_size=1)
+        self.segment1 = nn.Conv2d(f0, num_classes, kernel_size=1)
         
-        self.pool
-        # Result
-        self.out = nn.Conv2d(in_channels=64, out_channels=num_classes, kernel_size=1)
+        #self.softmax = F.softmax()
 
     def forward(self, x):
-        down_1, p1 = self.down_convolution_1(x)
-        down_2, p2 = self.down_convolution_2(p1)
-        down_3, p3 = self.down_convolution_3(p2)
-        down_4, p4 = self.down_convolution_4(p3)
+        H, W = x.shape[-2:]
 
-        b = self.bottle_neck(p4)
+        e1 = self.enoce1(x)
+        e2 = self.encode2(self.down1(e1))
+        e3 = self.encode3(self.down2(encode2))
 
-        up_1 = self.up_convolution_1(b, down_4)
-        up_2 = self.up_convolution_2(up_1, down_3)
-        up_3 = self.up_convolution_3(up_2, down_2)
-        up_4 = self.up_convolution_4(up_3, down_1)
+        b = self.bottleneck(self.down3(e3))
 
-        out = self.out(up_4)
-        return out
+        d3 = self.decode3(torch.cat([self.up3(b), e3]))
+        d2 = self.decode2(torch.cat([self.up2(d3), e2]))
+        d1 = self.decode1(torch.cat([self.up1(d2), e1]))
 
-
-    def DoubleConv(self, in_ch, out_ch, dropout_p):
-        return nn.Sequentual(
-                # First convolution
-                nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_ch),
-                nn.LeakyReLu(negative_slope=0.2, inplace=True),
-                nn.Dropout2d(self.dropout_p)
-                
-                # Second convolution
-                nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1),
-                nn.BatchNorm2d(out_ch),
-                nn.LeakyReLu(negative_slope=0.2, inplace=True),
-                nn.Dropout2d(self.dropout_p)
-                )
-
-    def DownSampler(self, in_ch, out_ch):
-        self.conv = self.DoubleConv(in_ch, out_ch)
-        self.pool = nn.MaxPool2d(kernel_size=KERNEL_SIZE, stride=STRIDE)
-
-    def UpSampler(self, in_ch, out_ch):
-        self.up = nn.ConvTranspose2d(in_ch, in_ch // 2, kernel_size=KERNEL_SIZE, stride=STRIDE)
-        self.conv = self.DoubleConv(in_ch, out_ch, dropout_p=0.2)
+        out1 = self.segment1(d1)
+        out2 = F.interpolate(self.segment2(d2), size=(H, W), mode='bilinear')
+        out3 = F.interpolate(self.segment3(d3), size=(H, W), mode='bilinear')
         
+        out = out1 + out2 + out3
+        #out = self.softmax(out)
+        
+        return out    
