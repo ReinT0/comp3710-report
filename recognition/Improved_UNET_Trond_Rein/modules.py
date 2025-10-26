@@ -31,7 +31,7 @@ class PreActivationBlock(nn.Module):
 
 
 class ImprovedUNet(nn.Module):
-    def __init__(self, in_channels=3, num_classes=NUM_CLASSES, base=32, dropout=0.1):
+    def __init__(self, in_channels=1, num_classes=NUM_CLASSES, base=32, dropout=0.1):
         super().__init__()
         f0, f1, f2, f3 = base, base*2, base*4, base*8
 
@@ -86,28 +86,27 @@ class ImprovedUNet(nn.Module):
 
 
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes=NUM_CLASSES, smooth=1e-6, ignore_bg=False):
-        super().__init__()
+    def __init__(self, num_classes=NUM_CLASSES, smooth=1e-6):
+        super(DiceLoss, self).__init__()
         self.num_classes = num_classes
         self.smooth = smooth
-        self.ignore_bg = ignore_bg
 
-    def forward(self, logits, targets):
-        probs = F.softmax(logits, dim=1)
+    def forward(self, predictions, targets):
+        if predictions.ndim == 4:
+            predictions = predictions.squeeze(1)
+
+        predictions = F.softmax(predictions, dim=1)
+
         target_oh = F.one_hot(targets.long(), self.num_classes)
         target_oh = target_oh.permute(0, 3, 1, 2).float()
-        
-        if self.ignore_bg:
-            probs = probs[:, 1:, ...]
-            target_oh = target_oh[:, 1:, ...]
 
         dims = (0, 2, 3)
 
-        intersection = (probs * target_oh).sum(dims)
-        denom = (probs + target_oh).sum(dims)
+        intersection = (predictions * target_oh).sum(dims)
+        denom = (predictions + target_oh).sum(dims)
 
         dice_coeff = (2.0 * intersection + self.smooth) / (denom + self.smooth)
 
-        loss = 1 - dice_coeff.mean()
+        loss = 1.0 - dice_coeff.mean()
 
         return loss

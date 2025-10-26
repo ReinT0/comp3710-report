@@ -13,6 +13,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from modules import ImprovedUNet, DiceLoss
 from dataset import OasisBrainDataset
@@ -31,65 +32,41 @@ def loaders(batch_size=BATCH_SIZE):
     return train_loader, val_loader, test_loader
 
 
-def dice_from_logits(logits, target, num_classes, excl_bg=True):
-    prediction = logits.argmax(dim=1)
-    target = target.long()
-    classes = range(1, num_classes) if excl_bg else range(num_classes)
-
-    dices = []
-    for c in classes:
-        p = (prediction == c)
-        t = (target == c)
-        intersection = (p & t).sum().float()
-        denom = p.sum().float() + t.sum().float()
-        if denom > 0:
-            dices.append((2.0 * intersection / denom).item())
-    return float(np.mean(dices)) if dices else 1.0
-
-def train_one_epoch(model, loader, optimizer, ce_loss, dice_loss, device=DEVICE, alpha=0.5):
+def train_one_epoch(model, loader, optimizer, dice_loss, device=DEVICE):
     model.train()
-    total = 0.0 
+    epoch_loss = []
 
-    for images, masks in loader:
+    for images, masks in tqdm(loader, desc="Training ongoing", leave=False):
         images, masks = images.to(device), masks.to(device)
-
-        logits = model(images)
-
-        ce = ce_loss(logits, masks.long())
-
-        dice = dice_loss(logits, masks)
-        loss = alpha * ce + (1 - alpha) * dice
-
+        
         optimizer.zero_grad()
+        outputs = model(images)
+
+        loss = dice_loss(outputs, masks.long())
+
         loss.backward()
         optimizer.step()
 
-        total += loss.item() * images.size(0)
+        epoch_loss.append(loss.item())
 
-    return total / len(loader.dataset)
+    return np.mean(epoch_loss)
 
 
-def evaluate(model, loader, ce_loss, dice_loss, num_classes=NUM_CLASSES, device=DEVICE, alpha=0.5):
+def evaluate(model, loader, dice_loss, device=DEVICE):
     model.eval()
-    total = 0.0
+    eval_loss = []
+    
+    with torch.no_grad():
+        for images, masks in tqdm(loader, desc="Validate", leave=False):
+            images, masks = images.to(device), masks.to(device)
 
-    dice_list = []
+            outputs = model(images)
 
-    for images, masks in loader:
-        images, masks = images.to(device), masks.to(device)
+            loss = dice_loss(outputs, masks.long())
+        
+            eval_loss.append(loss.item())
 
-        logits = model(images)
-
-        ce = ce_loss(logits, masks.long())
-
-        dice = dice_loss(logits, masks)
-        loss = alpha * ce + (1 - alpha) * dice
-
-        total += loss.item() * images.size(0)
-        dice_list.append(dice_from_logits(logits, masks, num_classes))
-
-    return total / len(loader.dataset), float(np.mean(dice_list))
-
+        return np.mean(eval_loss)
 
 def plot_curves(history, out_dir):
     out_dir = Path(out_dir)
@@ -134,6 +111,8 @@ def main():
     args = parser.parse_args()
 
     device = torch.device(DEVICE)
+    print(f"Using device: {device}")
+
     save_dir = Path(args.save_dir); save_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = save_dir / 'best.pt'
 
@@ -143,30 +122,40 @@ def main():
     # model
     model = ImprovedUNet(in_channels=args.in_channels, num_classes=NUM_CLASSES, base=args.base, dropout=args.dropout).to(device)
 
-    # losses (simple + stable)
-    ce_loss = nn.CrossEntropyLoss()
-
-    dice_loss = DiceLoss(ignore_bg=True)
+    dice_loss = DiceLoss()
 
     # train
-    history = {'train_loss': [], 'val_loss': [], 'val_dice': []}
-    best_dice = -1.0
+    history = {'train_loss': [], 'val_loss': []}#, 'val_dice': []}
+    best_loss = float("inf")
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    
+    train_losses = []
+    val_losses = []
+
+    val0 = evaluate(model, val_loader, dice_loss, device)
+    print(f"Epoch 000 | Val loss={val0:.4f}")
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, train_loader, optimizer, ce_loss, dice_loss, device, alpha=0.5)
-        val_loss, val_dice = evaluate(model, val_loader, ce_loss, dice_loss, NUM_CLASSES, device, alpha=0.5)
+
+        train_loss = train_one_epoch(model, train_loader, optimizer, dice_loss, device)
+        val_loss = evaluate(model, val_loader, dice_loss, device)
+        
+        #avg_train_loss = train_loss / len(train_loader)
+        #train_losses.append(train_loss)
+
+        #avg_val_loss = val_loss / len(val_loader)
+        #val_losses.append(val_loss)
+        print(f"Epoch {epoch:03d} | Train loss={train_loss:.4f} | Val loss={val_loss:.4f}")
+
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
-        history['val_dice'].append(val_dice)
-
-        print(f"Epoch {epoch:03d} | train={train_loss:.4f} | val={val_loss:.4f} | dice={val_dice:.4f}")
+        #history['val_dice'].append(val_dice)
 
         # save best by val Dice
-        if val_dice > best_dice:
-            best_dice = val_dice
+        if val_loss < best_loss:
+            best_loss = val_loss
             torch.save({
                 'model_state': model.state_dict(),
                 'num_classes': NUM_CLASSES,
@@ -174,14 +163,14 @@ def main():
                 'base': args.base,
                 'dropout': args.dropout,
             }, ckpt_path)
-            print(f"  ↳ saved new best to {ckpt_path} (dice {best_dice:.4f})")
+            print(f"  ↳ saved new best to {ckpt_path} (loss {best_loss:.4f})")
 
     # test with best checkpoint
     print("\nEvaluating on test set with best checkpoint...")
     best = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(best['model_state'])
-    test_loss, test_dice = evaluate(model, test_loader, ce_loss, dice_loss, device, NUM_CLASSES)
-    print(f"TEST | loss={test_loss:.4f} | dice={test_dice:.4f}")
+    test_loss = evaluate(model, test_loader, dice_loss, device=device)
+    print(f"TEST | Test loss={test_loss:.4f}")
 
     # plots
     plot_curves(history, save_dir)

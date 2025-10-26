@@ -5,15 +5,17 @@ import numpy as np
 import torch, os
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
+#import torchvision.transforms as transforms
 from PIL import Image
 
-from utils import TRAIN_DIR, TRAIN_SEG_DIR, TEST_DIR, TEST_SEG_DIR, VAL_DIR, VAL_SEG_DIR, NUM_CLASSES
+from utils import TRAIN_DIR, TRAIN_SEG_DIR, TEST_DIR, TEST_SEG_DIR, VAL_DIR, VAL_SEG_DIR, NUM_CLASSES, CLASS_VALUES
 
 class OasisBrainDataset(Dataset):
     def __init__(self,
                  img_set,
                  size,
-                 num_classes=NUM_CLASSES):
+                 num_classes=NUM_CLASSES,
+                 transform=False):
         
         # Set which file to load given argument       
         set_map = {
@@ -30,20 +32,39 @@ class OasisBrainDataset(Dataset):
 
         self.size = (size, size)
         self.num_classes = num_classes
+        self.transform = transform
 
         self.images = sorted(os.listdir(self.image_dir))
         self.masks = sorted(os.listdir(self.mask_dir))
+
+        assert len(self.images) == len(self.masks), "Image/Mask count mismatch"
         
-        assert len(self.images) == len(self.masks), "Image/Mask count mismatch"  
-        
+        """
+        if transform:
+            self.transform = transforms.Compose([
+                TF.resize(self.size, interpolation=TF.InterpolationMode.BILINEAR),
+                #transfroms.Resize(self.size, interpolation=transforms.InterpolationMode.BILINEAR),
+                TF.to_tensor(),
+                TF.normalize(
+                    mean=[0.5],
+                    std=[0.5]
+                )
+            ])  
+        """
 
     def __len__(self):
         return len(self.images)
 
     def __getitem__(self, idx):
-        img = Image.open(self.image_dir + "/" + self.images[idx])
-        mask = Image.open(self.mask_dir + "/" + self.masks[idx])
-
+        img = Image.open(self.image_dir + "/" + self.images[idx]).convert("L")
+        mask = Image.open(self.mask_dir + "/" + self.masks[idx]).convert("L")
+        """
+        if self.transform:
+            img = self.transform(img)
+        else:
+            img = TF.resize(img, self.size, interpolation=TF.InterpolationMode.BILINEAR)
+            img = TF.to_tensor(img)
+        """
         img = TF.resize(img, self.size, interpolation=TF.InterpolationMode.BILINEAR)
         mask = TF.resize(mask, self.size, interpolation=TF.InterpolationMode.NEAREST)
 
@@ -51,12 +72,11 @@ class OasisBrainDataset(Dataset):
         img = TF.normalize(img, mean=[0.5], std=[0.5])
         
         mask = np.array(mask, dtype=np.uint64)
-        
-        # This is for make sure the max value for a class i 255 and splits it right
         mask = np.floor(mask.astype(np.float32) * self.num_classes / 256.0).astype(np.int64)
         mask = np.clip(mask, 0, self.num_classes - 1)
         
         mask = torch.from_numpy(mask)
+
         return img, mask
 
 

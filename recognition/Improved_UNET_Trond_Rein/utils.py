@@ -6,22 +6,25 @@ import numpy as np
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # directory for files
-TRAIN_DIR = './data/OASIS/keras_png_slices_train'
-TRAIN_SEG_DIR = './data/OASIS/keras_png_slices_seg_train'
+ROOT_DIR = './data/OASIS'
 
-TEST_DIR = './data/OASIS/keras_png_slices_test'
-TEST_SEG_DIR = './data/OASIS/keras_png_slices_seg_test'
+TRAIN_DIR = ROOT_DIR + '/keras_png_slices_train'
+TRAIN_SEG_DIR = ROOT_DIR+ '/keras_png_slices_seg_train'
 
-VAL_DIR = './data/OASIS/keras_png_slices_validate'
-VAL_SEG_DIR = './data/OASIS/keras_png_slices_seg_validate'
+TEST_DIR = ROOT_DIR + '/keras_png_slices_test'
+TEST_SEG_DIR = ROOT_DIR + '/keras_png_slices_seg_test'
+
+VAL_DIR = ROOT_DIR + '/keras_png_slices_validate'
+VAL_SEG_DIR = ROOT_DIR + '/keras_png_slices_seg_validate'
 
 # some image params
-IMAGE_SIZE = 128
-NUM_CLASSES = 4
+IMAGE_SIZE = 256
 CLASS_VALUES = np.array([0, 85, 170, 255], dtype=np.uint8)
-BATCH_SIZE = 4
+NUM_CLASSES = len(CLASS_VALUES)
+print(NUM_CLASSES)
+BATCH_SIZE = 8
 
 
 # number of epochs to run
-EPOCHS = 150
+EPOCHS = 5
 
