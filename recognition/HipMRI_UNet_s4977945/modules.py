@@ -3,7 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from utils import NUM_CLASSES
 
-
 # Helper for the UNet
 class PreActivationBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dropout=0.1):
@@ -107,6 +106,7 @@ class DiceLoss(nn.Module):
 
         dice_coeff = (2.0 * intersection + self.smooth) / (denom + self.smooth)
 
-        loss = 1.0 - dice_coeff.mean()
+        loss = 1.0 - dice_coeff[1:].mean()
 
         return loss
+

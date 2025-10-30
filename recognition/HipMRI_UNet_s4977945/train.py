@@ -5,7 +5,6 @@ sure to plot the losses and metrics during training
 """
 
 import argparse, os
-from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
@@ -14,21 +13,22 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from pathlib import Path
 
 from modules import ImprovedUNet, DiceLoss
-from dataset import OasisBrainDataset
+from dataset import HipMRIDataset
 
 from utils import IMAGE_SIZE, NUM_CLASSES, EPOCHS, BATCH_SIZE, DEVICE
 
-
 def loaders(batch_size=BATCH_SIZE):
-    train_set = OasisBrainDataset('train', IMAGE_SIZE, NUM_CLASSES)
-    val_set = OasisBrainDataset('val', IMAGE_SIZE, NUM_CLASSES)
-    test_set = OasisBrainDataset('test', IMAGE_SIZE, NUM_CLASSES)
+    train_set = HipMRIDataset('train', IMAGE_SIZE, NUM_CLASSES, transform=True)
+    val_set = HipMRIDataset('val', IMAGE_SIZE, NUM_CLASSES, transform=True)
+    test_set = HipMRIDataset('test', IMAGE_SIZE, NUM_CLASSES, transform=True)
     
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=True)
-    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=True)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=True)
+    pin = torch.cuda.is_available()
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, pin_memory=pin)
+    val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False, pin_memory=pin)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False, pin_memory=pin)
     return train_loader, val_loader, test_loader
 
 
@@ -55,6 +55,7 @@ def train_one_epoch(model, loader, optimizer, dice_loss, device=DEVICE):
 def evaluate(model, loader, dice_loss, device=DEVICE):
     model.eval()
     eval_loss = []
+    eval_dice = []
     
     with torch.no_grad():
         for images, masks in tqdm(loader, desc="Validate", leave=False):
@@ -63,10 +64,9 @@ def evaluate(model, loader, dice_loss, device=DEVICE):
             outputs = model(images)
 
             loss = dice_loss(outputs, masks.long())
-        
             eval_loss.append(loss.item())
 
-        return np.mean(eval_loss)
+        return float(np.mean(eval_loss))
 
 def plot_curves(history, out_dir):
     out_dir = Path(out_dir)
@@ -103,10 +103,9 @@ def main():
     parser.add_argument('--epochs', type=int, default=EPOCHS)
     parser.add_argument('--batch_size', type=int, default=BATCH_SIZE)
     parser.add_argument('--lr', type=float, default=0.001)
-    #parser.add_argument('--num_workers', type=int, default=2)
     parser.add_argument('--save_dir', type=str, default='./outputs')
-    parser.add_argument('--in_channels', type=int, default=1)   # grayscale by default
-    parser.add_argument('--base', type=int, default=16)
+    parser.add_argument('--in_channels', type=int, default=1)
+    parser.add_argument('--base', type=int, default=32)
     parser.add_argument('--dropout', type=float, default=0.1)
     args = parser.parse_args()
 
@@ -125,37 +124,30 @@ def main():
     dice_loss = DiceLoss()
 
     # train
-    history = {'train_loss': [], 'val_loss': []}#, 'val_dice': []}
-    best_loss = float("inf")
+    history = {'train_loss': [], 'val_loss': [], 'val_dice': []}
+    best_dice = -float("inf")
     
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    
-    train_losses = []
-    val_losses = []
 
-    val0 = evaluate(model, val_loader, dice_loss, device)
-    print(f"Epoch 000 | Val loss={val0:.4f}")
+    val0_loss = evaluate(model, val_loader, dice_loss, device)
+    print(f"Epoch 000 | Val loss={val0_loss:.4f}")
 
     for epoch in range(1, args.epochs + 1):
 
         train_loss = train_one_epoch(model, train_loader, optimizer, dice_loss, device)
-        val_loss = evaluate(model, val_loader, dice_loss, device)
         
-        #avg_train_loss = train_loss / len(train_loader)
-        #train_losses.append(train_loss)
+        val_loss = evaluate(model, val_loader, dice_loss, device)
+        val_dice = 1.0 - val_loss
 
-        #avg_val_loss = val_loss / len(val_loader)
-        #val_losses.append(val_loss)
         print(f"Epoch {epoch:03d} | Train loss={train_loss:.4f} | Val loss={val_loss:.4f}")
-
 
         history['train_loss'].append(train_loss)
         history['val_loss'].append(val_loss)
-        #history['val_dice'].append(val_dice)
+        history['val_dice'].append(val_dice)
 
         # save best by val Dice
-        if val_loss < best_loss:
-            best_loss = val_loss
+        if val_dice > best_dice:
+            best_dice = val_dice
             torch.save({
                 'model_state': model.state_dict(),
                 'num_classes': NUM_CLASSES,
@@ -163,14 +155,15 @@ def main():
                 'base': args.base,
                 'dropout': args.dropout,
             }, ckpt_path)
-            print(f"  ↳ saved new best to {ckpt_path} (loss {best_loss:.4f})")
+            print(f"  ↳ saved new best to {ckpt_path} (val_dice: {best_dice:.4f})")
 
     # test with best checkpoint
     print("\nEvaluating on test set with best checkpoint...")
     best = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(best['model_state'])
     test_loss = evaluate(model, test_loader, dice_loss, device=device)
-    print(f"TEST | Test loss={test_loss:.4f}")
+    test_dice = 1.0 - test_loss
+    print(f"TEST | Test loss={test_loss:.4f} | dice={test_dice:.4f}")
 
     # plots
     plot_curves(history, save_dir)
