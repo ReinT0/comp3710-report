@@ -38,5 +38,4 @@ NUM_CLASSES = 6
 BATCH_SIZE = 8
 
 # Number of epochs to run
-EPOCHS = 40
-
+EPOCHS = 20 # Seems to be enough to get high enough dice
