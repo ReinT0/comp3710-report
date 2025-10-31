@@ -40,7 +40,7 @@ _Three test examples: original slice, ground‑truth mask, and prediction. Botto
 ![Validation Dice](./assets/plots/val_dice.png)  
 _Validation Dice (excluding background) across epochs._
 
-![Loss curves](./assets/plotsloss_curve.png)  
+![Loss curves](./assets/plots/loss_curve.png)  
 _Training vs validation loss across epochs._  (Both exported by `train.py`.)
 
 ---
@@ -158,8 +158,6 @@ To resume or modify hyperparameters, use the CLI flags shown above.
 - F. Isensee, P. Kickingereder, W. Wick, M. Bendszus, and K. H. Maier-Hein, “Brain Tumor Segmentation and Radiomics Survival Prediction: Contribution to the BRATS 2017 Challenge,” Feb. 2018. [Online]. Available: https://arxiv.org/abs/1802.10508v1
 
 ---
-
---
 
 ## Declaration of Generative AI use
 - As I am an exchange student, I am not quite fluent in english and have used ChatGPT 5 to help me with translations and some descriptions.
